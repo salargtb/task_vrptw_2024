@@ -114,11 +114,10 @@ def create_buckets(lower_bound, increment, upper_bound):
     Creates demand buckets for a customer, starting at their demand.
 
     Parameters:
-    - total_demand (int): The total demand of the customer (du[u]).
+    - lower_bound (int): The total demand of the customer (du[u]).
     - increment (int): The fixed increment for each bucket.
-    - d0 (int): The overall capacity (upper limit for d_plus).
-    - start (int, optional): The starting point of the first bucket.
-                             If None, starts at total_demand.
+    - upper_bound (int): The overall capacity (upper limit for d_plus).
+
 
     Returns:
     - List[Tuple[int, int]]: A list of tuples representing the (d_minus, d_plus) of each bucket.
@@ -493,7 +492,7 @@ def create_neighborhoods(data, starting_depot, ending_depot, k, total_time, tota
         travel_time_du = distance_du  
 
         # checking feasiblity of starting time at depot
-        arrival_time_at_u = max(data[1]["early"], data[1]["early"] + travel_time_du + data[1]["service"])
+        arrival_time_at_u = max(data[u]["early"], data[1]["early"] + travel_time_du + data[1]["service"])
         if arrival_time_at_u > data[u]["late"]:
             continue  # infeasible
         
@@ -632,8 +631,8 @@ def compute_c_and_phis(data, route):
 
         # Compute base-case cost and phis
         c = travel_time_computer(data, u,v)
-        phi = min(t_plus_u, t_plus_v - travel_time_computer(data, u,v))  # equation 13a
-        phi_hat = max(t_minus_u, t_minus_v - travel_time_computer(data, u,v))  # equation 13b
+        phi = min(t_plus_u, t_plus_v + travel_time_computer(data, u,v))  # equation 13a
+        phi_hat = max(t_minus_u, t_minus_v + travel_time_computer(data, u,v))  # equation 13b
         return c, phi, phi_hat
         
     
@@ -646,8 +645,8 @@ def compute_c_and_phis(data, route):
     # recursively calculating c_(r_minus), phi_(r_minus), phiHat_(r_minus)
     c_minus, phi_minus, phihat_minus = compute_c_and_phis(data, r_minus)
     
-    phi   = min(t_plus_u, phi_minus - travel_time_computer(data, u,w))  # equation 13c
-    phi_hat = max(t_minus_u, phihat_minus - travel_time_computer(data, u,w))  # equation 13d
+    phi   = min(t_plus_u, phi_minus + travel_time_computer(data, u,w))  # equation 13c
+    phi_hat = max(t_minus_u, phihat_minus + travel_time_computer(data, u,w))  # equation 13d
     c     = c_minus + travel_time_computer(data, u,w)
     return c, phi, phi_hat
 
@@ -699,6 +698,7 @@ def creating_efficient_frontier(data, P_plus):
 
             # Predecessor routes
             r_minus_list = R_dict.get(p_hat, [])
+            
             if not r_minus_list:
                 continue  # infeasible
             
@@ -1538,7 +1538,7 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     #solving the model
     
     model.optimize()
-    
+
     
     if model.status == GRB.OPTIMAL:
         objective_value = model.objVal
@@ -1548,14 +1548,15 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
         pi_uwk = {}
         z_D_values = {}
         z_T_values = {}
-        
+
         for node in DG_nodes:
             if node[0] not in ['alpha', 'bar_alpha']:
                 constr_name = f"cap_flow_balance_{node}"
                 constr1 = model.getConstrByName(constr_name)
                 if constr1:
                     capacity_flow_balance_duals[node] = constr1.Pi  # Dual value (shadow price)
-                    
+    
+            
         for node in TG_nodes:
                 if node[0] not in ['alpha', 'bar_alpha']:
                     constr_name = f"time_flow_balance_{node}"

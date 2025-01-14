@@ -40,7 +40,8 @@ def euclidean_dist(x1, y1, x2, y2):
     Returns:
         float: The Euclidean distance between the two points.
     """
-    return math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+    distance = math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+    return round(distance, 2)
 
 def route_feasible(alpha_node, u_node, w_node, bar_alpha_node, capacity):
     """
@@ -64,6 +65,7 @@ def route_feasible(alpha_node, u_node, w_node, bar_alpha_node, capacity):
     dist_u_w = euclidean_dist(u_node["x"], u_node["y"], w_node["x"], w_node["y"])
     arrival_w = finish_u + dist_u_w
     start_w = max(w_node["early"], arrival_w)
+    
     if start_w > w_node["late"]:
         return False
     finish_w = start_w + w_node["service"]
@@ -76,6 +78,7 @@ def route_feasible(alpha_node, u_node, w_node, bar_alpha_node, capacity):
 
     # If none of these checks fail => feasible
     return True
+
 
 def generate_E_star(all_nodes, node_data, alpha, bar_alpha, d0):
     """
@@ -135,18 +138,17 @@ def solve_model(all_nodes, customers, node_data, E_star, t0, d0, alpha, bar_alph
     # defining tau_u decision variables
     tau = {}
     for u in all_nodes:
-        tau[u] = model.addVar(lb=0.0, ub=t0, vtype=GRB.CONTINUOUS, name=f"tau_{u}")
+        tau[u] = model.addVar(lb=node_data[u]["t_minus_budget"], ub=node_data[u]["t_plus_budget"], vtype=GRB.CONTINUOUS, name=f"tau_{u}")
     
     # defining delta_u decision variables
     delta = {}
     for u in all_nodes:
-        delta[u] = model.addVar(lb=0.0, ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
+        delta[u] = model.addVar(lb=node_data[u]['demand'], ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
     
     
     # defining objective function
     obj_expr = gp.quicksum(E_star[(u,w)] * x[(u,w)] for (u,w) in E_star.keys())
     model.setObjective(obj_expr, GRB.MINIMIZE)
-    
     
     # Force start depot to have tau[alpha] = t0 (this is based on paper budget remaining logic)
     model.addConstr(tau[alpha] == t0, "start_time_resource")
@@ -157,53 +159,56 @@ def solve_model(all_nodes, customers, node_data, E_star, t0, d0, alpha, bar_alph
     # Each customer has exactly 1 incoming arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star) == 1,
+            gp.quicksum(x[(u,v)] for v in all_nodes if (u,v) in E_star.keys()) == 1,
             name=f"arrive_once_{u}"
         )
     
     # Each customer has exactly 1 outgoing arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(u,w)] for w in all_nodes if (u,w) in E_star) == 1,
+            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star.keys()) == 1,
             name=f"depart_once_{u}"
         )
     
     
     # constraint for linking routing and capacity
-    for (u,w) in E_star.keys():
-        if (w in customers):
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            dv = node_data[v]["demand"]
             du = node_data[u]["demand"]
-            dw = node_data[w]["demand"]
             model.addConstr(
-                delta[u] - du >= delta[w] - (d0 + du)*(1 - x[(u,w)]),
+                delta[v] - dv >= delta[u] - (d0 + dv)*(1 - x[(v,u)]),
                 name=f"cap_{u}_{w}"
             )
-    
-    
+
+
+
     # constraint for linking routing and time
-    for (u,w) in E_star.keys():
-        if (w in customers):
-            t_uw = travel_time_computer(u,w, node_data)
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            t_vu = travel_time_computer(v,u, node_data)
             # Big-M 
-            M_uw = t_uw + node_data[u]["t_plus_budget"]
+            M_vu = t_vu + node_data[u]["t_plus_budget"]
     
             model.addConstr(
-                tau[u] - t_uw >= (tau[w]) - M_uw*(1 - x[(u,w)]),
-                name=f"time_{u}_{w}"
+                tau[v] - t_vu >= (tau[u]) - M_vu*(1 - x[(v,u)]),
+                name=f"time_{v}_{u}"
             )
+
+
     
     
-    ## bound constraints for time remaining at each customer based on time window
-    for u in customers:
+    # ## bound constraints for time remaining at each customer based on time window
+    # for u in customers:
     
-        model.addConstr(tau[u] <= node_data[u]["t_plus_budget"], name=f"tw_min_{u}")
-        model.addConstr(tau[u] >= node_data[u]["t_minus_budget"], name=f"tw_max_{u}")
+    #     model.addConstr(tau[u] <= node_data[u]["t_plus_budget"], name=f"tw_min_{u}")
+    #     model.addConstr(tau[u] >= node_data[u]["t_minus_budget"], name=f"tw_max_{u}")
     
     
-    # bound constraint for capacity remaining at each customer
-    for u in customers:
-        du = node_data[u]["demand"]
-        model.addConstr(delta[u] >= du, name=f"delta_lower_{u}")
+    # # bound constraint for capacity remaining at each customer
+    # for u in customers:
+    #     du = node_data[u]["demand"]
+    #     model.addConstr(delta[u] >= du, name=f"delta_lower_{u}")
     
     
     # constraint for minimum number of vehicles
@@ -211,14 +216,16 @@ def solve_model(all_nodes, customers, node_data, E_star, t0, d0, alpha, bar_alph
     min_vehicles = math.ceil(total_demand / d0)
     
     model.addConstr(
-        gp.quicksum(x[(alpha,w)] for w in customers if (alpha,w) in E_star) >= min_vehicles,
+        gp.quicksum(x[(alpha,w)] for w in customers if (alpha,w) in E_star.keys()) >= min_vehicles,
         name="min_vehicle_start"
     )
     
+
     
     # defining time limit for the solver
     model.Params.TimeLimit = 1000
-    
+
+
     #solving the model
 
     model.optimize()

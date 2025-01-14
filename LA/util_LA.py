@@ -41,7 +41,8 @@ def euclidean_dist(x1, y1, x2, y2):
     Returns:
         float: The Euclidean distance between the two points.
     """
-    return math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+    distance = math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+    return round(distance, 2)
 
 def route_feasible(alpha_node, u_node, w_node, bar_alpha_node, capacity):
     """
@@ -156,141 +157,127 @@ def merge_buckets(node, buckets, shadow_prices):
     - Updated list of buckets for the node.
     """
     if len(buckets) < 2:
-        return buckets  # Return unchanged if less than 2 buckets
+        return buckets[:]  # Return a copy to avoid in-place issues
 
-    i = len(buckets) - 1  # Start from the last bucket
+    i = 0  # Start from the first bucket
 
-    while i > 0:  # Stop at the first bucket
+    while i < len(buckets) - 1:  # Stop before the last bucket
         current_bucket = buckets[i]
-        previous_bucket = buckets[i - 1]
+        next_bucket = buckets[i + 1]
 
-        # Check if buckets can be merged based on shadow prices
-        merge_condition = shadow_prices.get((node, i), 0) == shadow_prices.get((node, i - 1), 0)
-        if merge_condition:
-            # Merge current and previous buckets
-            previous_bucket = (previous_bucket[0], current_bucket[1])  # Merge intervals
-            buckets[i - 1] = previous_bucket  # Update the previous bucket
-            buckets.pop(i)  # Remove the current bucket
-            i -= 2
+        # Check if both keys exist and shadow prices are identical
+        if (node, i) in shadow_prices and (node, i + 1) in shadow_prices:
+            merge_condition = shadow_prices[(node, i)] == shadow_prices[(node, i + 1)]
         else:
-            i -= 1  # Move to the next bucket
+            merge_condition = False
+
+        if merge_condition:
+            # Merge current and next buckets
+            merged_bucket = (current_bucket[0], next_bucket[1])  # Merge intervals
+            buckets[i] = merged_bucket  # Update current bucket
+            buckets.pop(i + 1)  # Remove the next bucket after merging
+        else:
+            i += 1  # Move to the next bucket only if no merge occurred
 
     return buckets
 
+
 def expand_capacity_buckets(Du, zD, du, d0):
     """
-    Expands the bucket ranges for each customer based on the flow `z_D(i, j)`, excluding flows ending at the depot.
-    
+    Expands capacity bucket ranges based on flow data.
+
     Parameters:
-        Du (dict): A dictionary representing the bucket ranges for each customer.
-        zD (dict): A dictionary of flow decision variables, where keys are tuples of the form 
-                   (from_node, to_node) and nodes are identified as (customer_id, bucket_number).
+        Du (dict): A dictionary representing the capacity bucket ranges for each customer.
+        zD (dict): A dictionary of flow decision variables for capacity.
         du (dict): A dictionary containing the demand values for each customer.
         d0 (float): The capacity of the depot (alpha).
-    
+
     Returns:
-        dict: The updated `Du` with expanded bucket ranges based on the given flow.
+        dict: Updated capacity buckets.
     """
+    thresholds_D = {customer: [bucket[1] for bucket in buckets] for customer, buckets in Du.items()}
     expanded_Du = Du.copy()
 
     for (from_node, to_node), flow in zD.items():
-        if flow > 0:  # check if the flow is positive
-            # Extract customer and bucket information
+        if flow > 0:
             from_customer, from_bucket = from_node
             to_customer, to_bucket = to_node
 
-            # Skip if the destination is the ending depot
-            if to_customer == 'bar_alpha':
+            if to_customer == 'bar_alpha' or from_customer == to_customer:
                 continue
 
-            # Determine the source 
             if from_customer == 'alpha':
-                from_d_plus = d0  # Depot's d^+ is d0
+                from_d_plus = d0
             else:
                 if from_customer not in expanded_Du or from_bucket - 1 < 0 or from_bucket - 1 >= len(expanded_Du[from_customer]):
                     continue
+                from_d_plus = expanded_Du[from_customer][from_bucket - 1][1]
 
-                # breakpoint()
-                from_d_plus = expanded_Du[from_customer][from_bucket - 1][1]  # Get d^+ for the source bucket
-
-            # Calculate new upper bound for the destination bucket
             demand_u = du[from_customer] if from_customer != 'alpha' else 0
             new_d_plus_j = from_d_plus - demand_u
 
-            # Update an existing bucket to include new_d_plus_j
-            target_buckets = expanded_Du[to_customer]
-            for i, (d_minus, d_plus) in enumerate(target_buckets):
-                if d_minus <= new_d_plus_j:
-                    # Expand the bucket if new_d_plus_j exceeds its current upper bound
-                    target_buckets[i] = (d_minus, max(d_plus, new_d_plus_j))
-                    break
+            if new_d_plus_j not in thresholds_D[to_customer]:
+                thresholds_D[to_customer].append(new_d_plus_j)
+                thresholds_D[to_customer].sort()
 
-    # Ensure buckets are sorted for each customer
-    for customer, buckets in expanded_Du.items():
-        expanded_Du[customer] = sorted(buckets, key=lambda x: x[0])
-
+    expanded_Du = {customer: [(buckets[0][0], thresholds_D[customer][0])] +
+                              [(thresholds_D[customer][i-1] + 1, thresholds_D[customer][i]) 
+                               for i in range(1, len(thresholds_D[customer]))]
+                   for customer, buckets in Du.items()}
 
     return expanded_Du
 
 
 def expand_time_buckets(Tu, zT, travel_time_computer, data, t0):
     """
-    Expands the time window buckets based on flow z_T(i, j), considering the upper bounds.
+    Expands time bucket ranges based on flow data considering travel time between nodes.
 
     Parameters:
-        Tu (dict): Time buckets for each customer.
-        zT (dict): Flow decision variable for time, keyed as (from_node, to_node).
-                   Each node is represented as (customer_id, bucket_number).
+        Tu (dict): A dictionary representing the time bucket ranges for each customer.
+        zT (dict): A dictionary of flow decision variables for time.
         travel_time_computer (function): Function to compute travel time between nodes.
-        data (any): Input data for the travel_time_computer function.
-        t0 (float): Time capacity of the depot (alpha).
+        data (any): Data required by the travel_time_computer function.
+        t0 (float): The time capacity of the depot (alpha).
 
     Returns:
-        dict: Updated Tu with expanded time window ranges.
+        dict: Updated time buckets.
     """
+    thresholds_T = {customer: [bucket[1] for bucket in buckets] for customer, buckets in Tu.items()}
     expanded_Tu = Tu.copy()
 
     for (from_node, to_node), flow in zT.items():
-        if flow > 0:  # check if the flow is positive
-            # Extract customer and bucket information
+        if flow > 0:
             from_customer, from_bucket = from_node
             to_customer, to_bucket = to_node
 
-            # Skip if the destination is the ending depot
-            if to_customer == 'bar_alpha':
+            if to_customer == 'bar_alpha' or from_customer == to_customer:
                 continue
 
-            # Determine the source 
             if from_customer == 'alpha':
-                from_t_plus = t0  # Depot's t^+ is t0
-                from_customer = 1
+                from_t_plus = t0
+                from_customer_id = 1
             else:
-
                 if from_customer not in expanded_Tu or from_bucket - 1 < 0 or from_bucket - 1 >= len(expanded_Tu[from_customer]):
                     continue
+                from_t_plus = expanded_Tu[from_customer][from_bucket - 1][1]
+                from_customer_id = from_customer
 
-                from_t_plus = expanded_Tu[from_customer][from_bucket - 1][1]  # Get t^+ for the source bucket
+            travel_time = travel_time_computer(data, from_customer_id, to_customer)
+            if to_bucket - 1 >= len(expanded_Tu[to_customer]) or to_bucket - 1 < 0:
+                continue
 
-            # Calculate travel time from u_i to u_j, including service time at u_i
-            travel_time = travel_time_computer(data, from_customer, to_customer)
+            new_t_plus_j = min(from_t_plus - travel_time, expanded_Tu[to_customer][to_bucket - 1][1])
 
-            # Calculate new t^+_j for the destination bucket
-            target_buckets = expanded_Tu[to_customer]
-            for i, (t_minus, t_plus) in enumerate(target_buckets):
-                # Update t^+_j to ensure it respects both the propagated and current upper bound
-                new_t_plus_j = min(from_t_plus - travel_time, t_plus)
-                target_buckets[i] = (t_minus, max(t_plus, new_t_plus_j))
-                break  # Stop after updating the first applicable bucket
+            if new_t_plus_j not in thresholds_T[to_customer]:
+                thresholds_T[to_customer].append(new_t_plus_j)
+                thresholds_T[to_customer].sort()
 
-    # Ensure buckets are sorted for each customer
-    for customer, buckets in expanded_Tu.items():
-        expanded_Tu[customer] = sorted(buckets, key=lambda x: x[0])
-
+    expanded_Tu = {customer: [(buckets[0][0], thresholds_T[customer][0])] +
+                              [(thresholds_T[customer][i-1] + 1, thresholds_T[customer][i]) 
+                               for i in range(1, len(thresholds_T[customer]))]
+                   for customer, buckets in Tu.items()}
 
     return expanded_Tu
-
-
-
 
 def construct_capacity_graph(customers, Du, du, d0):
     """
@@ -351,7 +338,7 @@ def construct_capacity_graph(customers, Du, du, d0):
             from_node = (u, k)
             to_node = (u, k - 1)
             edges.append((from_node, to_node))
-
+    # breakpoint()
     # Add edges between different customers based on capacity constraints
     for u in customers:
         buckets_u = Du[u]
@@ -365,7 +352,7 @@ def construct_capacity_graph(customers, Du, du, d0):
                     if (d_plus_i - du[u]) >= d_minus_j:
                         # Condition 2: If k > 1, d_j- > d_{u,k-1}+ - du[u]
                         if k > 1:
-                            d_u_k_minus_1_plus = buckets_u[k - 1][1]  # k-1 index
+                            d_u_k_minus_1_plus = buckets_u[k - 2][1]  # k-1 index
                             if not (d_minus_j > (d_u_k_minus_1_plus - du[u])):
                                 continue  # Skip if condition not met
                         # Add the edge
@@ -422,13 +409,13 @@ def construct_time_graph(data, customers, Tu, t0):
         from_node = alpha
         to_node = (u, num_buckets)
         edges.append((from_node, to_node))
-
+    # breakpoint()
     # Add edges from the first bucket of each customer to the ending depot
     for u in customers:
         from_node = (u, 1)
         to_node = bar_alpha
         edges.append((from_node, to_node))
-
+    # breakpoint()
     # Add edges between consecutive buckets of the same customer
     for u in customers:
         customer_nodes = [node for node in nodes if node[0] == u]
@@ -436,7 +423,7 @@ def construct_time_graph(data, customers, Tu, t0):
             from_node = (u, k)
             to_node = (u, k - 1)
             edges.append((from_node, to_node))
-
+    # breakpoint()
     # Add edges between buckets of different customers
     for u in customers:
         for v in customers:
@@ -452,13 +439,15 @@ def construct_time_graph(data, customers, Tu, t0):
                     if t_plus_u - travel_time >= t_minus_v:
                         # Condition 2: If k > 1, t^-_v > t^+_{u, k-1} - travel_time
                         k = node_u[1]  # Bucket index for u
+                        
                         if k > 1:
                             t_plus_u_prev = node_attributes[(u, k - 1)]['t_plus']
                             if not (t_minus_v > t_plus_u_prev - travel_time):
                                 continue  # Skip if condition not met
                         # Add the edge
+                        #breakpoint()
                         edges.append((node_u, node_v))
-
+    # breakpoint()
     return nodes, edges, node_attributes
 
 def calculate_distance(item1, item2):
@@ -483,10 +472,10 @@ def create_neighborhoods(data, starting_depot, ending_depot, k, total_time, tota
 
     """
     neighborhoods = {}
-    start = 1
+    start = 2
     end = len(data)-1
     # creating nodes for each customer
-    for u in range(start, end + 1):  
+    for u in range(start, end + 1):
         neighbors = []
         distance_du = calculate_distance(data[1], data[u])  # distance between starting depot and u
         travel_time_du = distance_du  
@@ -571,11 +560,7 @@ def base_case_feasilibtiy(data, u, v, vehicle_capacity):
     if total_demand > vehicle_capacity:
         return False
     
-    # # 2) Time window & travel
-    # # Let's define a small helper to compute travel times:
-    # def travel_time(a, b):
-    #     return dist(node_data[a]["x"], node_data[a]["y"],
-    #                 node_data[b]["x"], node_data[b]["y"])
+
 
     time_now = 0.0
 
@@ -658,7 +643,7 @@ def creating_efficient_frontier(data, P_plus):
     this function obtains the efficient frontier for all p in P_plus.
 
     """
-
+    
     # adding feasible base cases to the efficient frontier
     for p in P_plus:
         u_p, N_p, v_p = p
@@ -759,7 +744,7 @@ def creating_efficient_frontier(data, P_plus):
     return R_dict
 
 
-def construct_R(u, R_dict, neighborhood_u, ending_depot, max_subset_size=5):
+def construct_R(u, R_dict, neighborhood_u, ending_depot, max_subset_size=6):
     """
     This function generates R by finding a match between nodes and R_dict.
     Max size of subsets is defined to manage computational expense.
@@ -788,24 +773,6 @@ def construct_R(u, R_dict, neighborhood_u, ending_depot, max_subset_size=5):
     R_clipped = {route[:-1] for route in R}
     return R_clipped
 
-def get_reduced_neighbors(R, neighborhood_u, u):
-    """
-    This function generates the reduced neighborhood N_u for u by keeping those 
-    neigborhoods that are in R
-
-    """
-    # Step 1: Extract all unique nodes from R
-    nodes_in_R = set()
-    for route in R:
-        nodes_in_R.update(route)
-
-    # Step 2: Intersect with the original neighborhood
-    reduced_neighbors = nodes_in_R & set(neighborhood_u)
-
-    # Step 3: Remove u itself (if present)
-    reduced_neighbors.discard(u)
-
-    return sorted(reduced_neighbors)  # Return sorted for consistency
 
 
 def compute_k(u, N_u, pi_uwk, pi_uwvk, E_star):
@@ -848,7 +815,7 @@ def compute_k(u, N_u, pi_uwk, pi_uwvk, E_star):
         sum_pi_uwvk = 0.0
         for w in Nk_plus:
             for v in Nk:
-                if v != w and (w, v) in E_star: 
+                if v != w and (w, v) in E_star.keys(): 
                     sum_pi_uwvk += pi_uwvk.get((u, w, v, k), 0.0)
         
         # total sum for this k
@@ -864,7 +831,7 @@ def compute_k(u, N_u, pi_uwk, pi_uwvk, E_star):
 
     
 
-def compute_a_k_wvr(u, routes_u, neighbor_list_u):
+def compute_a_k_wvr(u, routes_u, N_k):
     """
     Computes a_{w,v,r}^k for a single customer 'u', 
     given:
@@ -885,31 +852,28 @@ def compute_a_k_wvr(u, routes_u, neighbor_list_u):
                 return False
         return True
     
-    num_neighbors = len(neighbor_list_u)
+
+    # N_u^{k+} = N_k ∪ {u}
+    N_k_plus = set(N_k) | {u}
     
-    for k in range(1, num_neighbors + 1):
-        # N_u^k = first k neighbors
-        N_k = neighbor_list_u[:k]
-        # N_u^{k+} = N_k ∪ {u}
-        N_k_plus = set(N_k) | {u}
-        
-        # For each route tuple in routes_u
-        for route_tuple in routes_u:
-            # For each w in N_k_plus and v in N_k
-            for w in N_k_plus:
-                for v in N_k:
-                    # Check partial route up to w in N_k_plus
-                    cond_w = partial_route_in_set(route_tuple, w, N_k_plus)
-                    # Check partial route up to v in N_k_plus
-                    cond_v = partial_route_in_set(route_tuple, v, N_k_plus)
-                    
-                    val = 1 if (cond_w and cond_v) else 0
-                    a_k_wvr[(k, w, v, route_tuple)] = val
+    # For each route tuple in routes_u
+    for route_tuple in routes_u:
+        # For each w in N_k_plus and v in N_k
+        for w in N_k_plus:
+            for v in N_k:
+                # Check partial route up to w in N_k_plus
+                cond_w = partial_route_in_set(route_tuple, w, N_k_plus)
+                # Check partial route up to v in N_k_plus
+                cond_v = partial_route_in_set(route_tuple, v, N_k_plus)
+                
+                val = 1 if (cond_w and cond_v) else 0
+                a_k_wvr[(w, v, route_tuple)] = val
     
     return a_k_wvr
 
 
-def calculate_a_w_star_k(u, k, w, routes_for_u, neighbor_list_u):
+
+def calculate_a_w_star_k(u, w, routes_for_u, N_k):
     """
     Computes a_{w*r}^k for a SINGLE (u, k, w) across all route tuples in routes_for_u.
     
@@ -926,7 +890,6 @@ def calculate_a_w_star_k(u, k, w, routes_for_u, neighbor_list_u):
 
     # 1) Build the sets N_u^k and N_u^{k+}
     # neighbor_list_u is the sorted list of neighbors for u
-    N_k = neighbor_list_u[:k]         # the first k neighbors
     N_k_plus = set(N_k) | {u}
     excluded = set(N_k) - {w}         # we'll use this to check "v not in (N_u^k - {w})"
 
@@ -1005,6 +968,7 @@ def calculate_a_w_star_k(u, k, w, routes_for_u, neighbor_list_u):
     return a_w_star_k_for_routes
 
 
+    
 
 def create_E_u_star_dict(N_u, u, E_star):
     """
@@ -1121,31 +1085,31 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
     # defining tau_u decision variables
     tau = {}
     for u in all_nodes:
-        tau[u] = model.addVar(lb=0.0, ub=t0, vtype=GRB.CONTINUOUS, name=f"tau_{u}")
+        tau[u] = model.addVar(lb=node_data[u]["t_minus_budget"], ub=node_data[u]["t_plus_budget"], vtype=GRB.CONTINUOUS, name=f"tau_{u}")
     
     # defining delta_u decision variables
     delta = {}
     for u in all_nodes:
-        delta[u] = model.addVar(lb=0.0, ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
+        delta[u] = model.addVar(lb=node_data[u]['demand'], ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
     
     # Define capacity flow variables for each edge in DG
     z_D = {}
     for (i, j) in DG_edges:
         var_name = f"zD_{i}_{j}"
-        z_D[(i, j)] = model.addVar(vtype=GRB.BINARY, name=var_name)
+        z_D[(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, name=var_name)
     
     # Define time flow variables for each edge in TG
     z_T = {}
     for (i, j) in TG_edges:
         var_name = f"zT_{i}_{j}"
-        z_T[(i, j)] = model.addVar(vtype=GRB.BINARY, name=var_name)
+        z_T[(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, name=var_name)
     
     # Define binary decision to order r
     y = {}
     for u, routes in R.items():
         for r in routes:
             var_name = f"y_{'_'.join(map(str, r))}"
-            y[r] = model.addVar(vtype=GRB.BINARY, name=var_name)
+            y[r] = model.addVar(vtype=GRB.CONTINUOUS, name=var_name)
     
     
     # defining objective function
@@ -1162,53 +1126,43 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
     # Each customer has exactly 1 incoming arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star.keys()) == 1,
+            gp.quicksum(x[(u,v)] for v in all_nodes if (u,v) in E_star.keys()) == 1,
             name=f"arrive_once_{u}"
-        ) ##
+        )
     
     # Each customer has exactly 1 outgoing arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(u,w)] for w in all_nodes if (u,w) in E_star.keys()) == 1,
+            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star.keys()) == 1,
             name=f"depart_once_{u}"
-        )##
+        )
     
     
     # constraint for linking routing and capacity
-    for (u,w) in E_star.keys():
-        if (w in customers):
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            dv = node_data[v]["demand"]
             du = node_data[u]["demand"]
-            dw = node_data[w]["demand"]
             model.addConstr(
-                delta[u] - du >= delta[w] - (d0 + du)*(1 - x[(u,w)]),
+                delta[v] - dv >= delta[u] - (d0 + dv)*(1 - x[(v,u)]),
                 name=f"cap_{u}_{w}"
             )
-    
-    
+
+
+
     # constraint for linking routing and time
-    for (u,w) in E_star.keys():
-        if (w in customers):
-            t_uw = travel_time_computer(node_data, u,w)
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            t_vu = travel_time_computer(node_data, v,u)
             # Big-M 
-            M_uw = t_uw + node_data[u]["t_plus_budget"]
+            M_vu = t_vu + node_data[u]["t_plus_budget"]
     
             model.addConstr(
-                tau[u] - t_uw >= (tau[w]) - M_uw*(1 - x[(u,w)]),
-                name=f"time_{u}_{w}"
+                tau[v] - t_vu >= (tau[u]) - M_vu*(1 - x[(v,u)]),
+                name=f"time_{v}_{u}"
             )
+
     
-    
-    ## bound constraints for time remaining at each customer based on time window
-    for u in customers:
-    
-        model.addConstr(tau[u] <= node_data[u]["t_plus_budget"], name=f"tw_max_{u}")
-        model.addConstr(tau[u] >= node_data[u]["t_minus_budget"], name=f"tw_min_{u}")
-    
-    
-    # bound constraint for capacity remaining at each customer
-    for u in customers:
-        du = node_data[u]["demand"]
-        model.addConstr(delta[u] >= du, name=f"delta_lower_{u}")
     
     
     # constraint for minimum number of vehicles
@@ -1218,10 +1172,13 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
     model.addConstr(
         gp.quicksum(x[(alpha,w)] for w in customers if (alpha,w) in E_star.keys()) >= min_vehicles,
         name="min_vehicle_start"
-    )##
+    )
     
+
     
     for u in customers:
+        if len(R[u]) == 0:
+            continue
         model.addConstr(
             gp.quicksum(y[r] for r in R[u]) == 1,
             name=f"order_selection_{u}"
@@ -1247,8 +1204,8 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
         E_star_uw = calculate_E_star_uw_dict(E_star, N_u[u], u)  ##
     
         for w in N_u_plus:  # Iterate over each w in N+_u
-            if w in E_star_uw:  # Ensure we have edges for w
-                edges = E_star_uw[w]  # Get edges (w, v) for the current w
+            if (u,w) in E_star_uw.keys():  # Ensure we have edges for w
+                edges = E_star_uw[(u,w)]  # Get edges (w, v) for the current w
     
                 # Define LHS: Sum of x[w, v] for all (w, v) in edges
                 lhs = gp.quicksum(x[edge] for edge in edges)  # Edge format is (w, v)
@@ -1259,7 +1216,10 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
                 # Add the constraint
                 model.addConstr(lhs >= rhs, name=f"final_order_consistency_u{u}_w{w}")
     
+
+
     
+        
     for node in DG_nodes:
             if node[0] not in ['alpha', 'bar_alpha']:
                 # Sum of zD over outgoing edges equals sum of zD over incoming edges
@@ -1300,7 +1260,9 @@ def mip_solver(all_nodes, customers, customer_demands, node_data, E_star, t0, d0
     
      
     # defining time limit for the solver
-    model.Params.TimeLimit = 1000
+    model.Params.TimeLimit = 1200
+
+
     #solving the model
     
     model.optimize()
@@ -1320,7 +1282,6 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     # constructing capacity and time graph and obtaining nodes, edges and attributes of the graphs
     DG_nodes, DG_edges, DG_node_attributes = construct_capacity_graph(customers, Du, customer_demands, d0)
     TG_nodes, TG_edges, TG_node_attributes = construct_time_graph(node_data, customers, Tu, t0)
-
     epsilon = 0.01
     
     # initialing the model
@@ -1334,12 +1295,12 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     # defining tau_u decision variables
     tau = {}
     for u in all_nodes:
-        tau[u] = model.addVar(lb=0.0, ub=t0, vtype=GRB.CONTINUOUS, name=f"tau_{u}")
+        tau[u] = model.addVar(lb=node_data[u]["t_minus_budget"], ub=node_data[u]["t_plus_budget"], vtype=GRB.CONTINUOUS, name=f"tau_{u}")
     
     # defining delta_u decision variables
     delta = {}
     for u in all_nodes:
-        delta[u] = model.addVar(lb=0.0, ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
+        delta[u] = model.addVar(lb=node_data[u]['demand'], ub=d0, vtype=GRB.CONTINUOUS, name=f"delta_{u}")
     
     # Define capacity flow variables for each edge in DG
     z_D = {}
@@ -1375,54 +1336,43 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     # Each customer has exactly 1 incoming arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star.keys()) == 1,
+            gp.quicksum(x[(u,v)] for v in all_nodes if (u,v) in E_star.keys()) == 1,
             name=f"arrive_once_{u}"
-        ) #
+        )
     
     # Each customer has exactly 1 outgoing arc
     for u in customers:
         model.addConstr(
-            gp.quicksum(x[(u,w)] for w in all_nodes if (u,w) in E_star.keys()) == 1,
+            gp.quicksum(x[(v,u)] for v in all_nodes if (v,u) in E_star.keys()) == 1,
             name=f"depart_once_{u}"
-        ) #
-    
+        )
     
     # constraint for linking routing and capacity
-    for (u,w) in E_star.keys():
-        if (w in customers):
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            dv = node_data[v]["demand"]
             du = node_data[u]["demand"]
-            dw = node_data[w]["demand"]
             model.addConstr(
-                delta[u] - du >= delta[w] - (d0 + du)*(1 - x[(u,w)]),
+                delta[v] - dv >= delta[u] - (d0 + dv)*(1 - x[(v,u)]),
                 name=f"cap_{u}_{w}"
             )
-    
-    
+
+
+
     # constraint for linking routing and time
-    for (u,w) in E_star.keys():
-        if (w in customers):
-            t_uw = travel_time_computer(node_data, u,w)
+    for (v,u) in E_star.keys():
+        if (u in customers):
+            t_vu = travel_time_computer(node_data, v,u)
             # Big-M 
-            M_uw = t_uw + node_data[u]["t_plus_budget"]
+            M_vu = t_vu + node_data[u]["t_plus_budget"]
     
             model.addConstr(
-                tau[u] - t_uw >= (tau[w]) - M_uw*(1 - x[(u,w)]),
-                name=f"time_{u}_{w}"
+                tau[v] - t_vu >= (tau[u]) - M_vu*(1 - x[(v,u)]),
+                name=f"time_{v}_{u}"
             )
-    
-    
-    ## bound constraints for time remaining at each customer based on time window
-    for u in customers:
-    
-        model.addConstr(tau[u] <= node_data[u]["t_plus_budget"], name=f"tw_max_{u}")
-        model.addConstr(tau[u] >= node_data[u]["t_minus_budget"], name=f"tw_min_{u}")
-    
-    
-    # bound constraint for capacity remaining at each customer
-    for u in customers:
-        du = node_data[u]["demand"]
-        model.addConstr(delta[u] >= du, name=f"delta_lower_{u}")
-    
+
+
+
     
     # constraint for minimum number of vehicles
     total_demand = sum(node_data[u]["demand"] for u in customers)
@@ -1431,10 +1381,11 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     model.addConstr(
         gp.quicksum(x[(alpha,w)] for w in customers if (alpha,w) in E_star.keys()) >= min_vehicles,
         name="min_vehicle_start"
-    ) #
-    
+    )
     
     for u in customers:
+        if len(R[u]) == 0:
+            continue
         model.addConstr(
             gp.quicksum(y[r] for r in R[u]) == 1,
             name=f"order_selection_{u}"
@@ -1480,7 +1431,7 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
                 
                 lhs = epsilon * k + gp.quicksum(x[(w, v_)] for v_ in outside_vs)
 
-                a_w_star_k = calculate_a_w_star_k(u, k, w, R[u], N_k)
+                a_w_star_k = calculate_a_w_star_k(u, w, R[u], N_k)
 
                 rhs = gp.quicksum(a_w_star_k.get(r, 0) * y[r] 
                                   for r in R[u])
@@ -1535,11 +1486,14 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     # defining time limit for the solver
     model.setParam("OutputFlag", 0)
     model.Params.TimeLimit = 1000
+    model.setParam('IntFeasTol', 1e-9)
+    model.setParam('FeasibilityTol', 1e-9)
+    model.setParam('OptimalityTol', 1e-9)
+
     #solving the model
     
     model.optimize()
 
-    
     if model.status == GRB.OPTIMAL:
         objective_value = model.objVal
         capacity_flow_balance_duals = {}
@@ -1602,5 +1556,6 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
         for (i, j), var in z_T.items():
             # Store the value of the variable in the dictionary
             z_T_values[(i, j)] = var.X
-    
+    # capacity_flow_balance_duals, time_flow_balance_duals, pi_uwvk, pi_uwk, z_D_values, z_T_values, objective_value
     return capacity_flow_balance_duals, time_flow_balance_duals, pi_uwvk, pi_uwk, z_D_values, z_T_values, objective_value
+

@@ -41,7 +41,7 @@ def euclidean_dist(x1, y1, x2, y2):
         float: The Euclidean distance between the two points.
     """
     distance = math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-    return round(distance, 2)
+    return round (distance, 2)
 
 def route_feasible(alpha_node, u_node, w_node, bar_alpha_node, capacity):
     """

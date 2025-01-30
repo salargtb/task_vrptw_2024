@@ -283,75 +283,6 @@ def expand_time_buckets(Tu, zT, travel_time_computer, data, t0, alpha, bar_alpha
 
     return expanded_Tu
 
-# def construct_capacity_graph(customers, Du, du, d0):
-
-#     nodes = []
-#     edges = []
-#     node_attributes = {}
-
-#     # Define starting and ending depot nodes
-#     alpha = ('alpha', 1)            
-#     bar_alpha = ('bar_alpha', 1)
-
-#     # Appending starting depot to node list. Based on the paper, d_minus = d_plus = d0
-#     nodes.append(alpha)
-#     node_attributes[alpha] = {'ui': 'alpha', 'd_minus': d0, 'd_plus': d0}
-    
-#     # Appending ending depot to node list. Based on the paper, d_minus = 0 and d_plus = d0
-#     nodes.append(bar_alpha)
-#     node_attributes[bar_alpha] = {'ui': 'bar_alpha', 'd_minus': 0, 'd_plus': d0}
-
-#     # Add nodes for each customer and their demand buckets
-#     for u in customers:
-#         buckets = Du[u]
-#         for k, (d_minus, d_plus) in enumerate(buckets, start=1):
-#             node = (u, k)
-#             nodes.append(node)
-#             node_attributes[node] = {'ui': u, 'd_minus': d_minus, 'd_plus': d_plus}
-
-#     # Add edges from the starting depot to the last bucket of each customer
-#     for u in customers:
-#         num_buckets = len(Du[u])
-#         from_node = alpha
-#         to_node = (u, num_buckets)
-#         edges.append((from_node, to_node))
-
-#     # Add edges from the first bucket of each customer to the ending depot
-#     for u in customers:
-#         from_node = (u, 1)
-#         to_node = bar_alpha
-#         edges.append((from_node, to_node))
-
-#     # Add edges between consecutive buckets of the same customer (dumping extra capacity)
-#     for u in customers:
-#         buckets = Du[u]
-#         for k in range(2, len(buckets) + 1):
-#             from_node = (u, k)
-#             to_node = (u, k - 1)
-#             edges.append((from_node, to_node))
-#     # breakpoint()
-#     # Add edges between different customers based on capacity constraints
-#     for u in customers:
-#         buckets_u = Du[u]
-#         for k, (d_minus_i, d_plus_i) in enumerate(buckets_u, start=1):
-#             for v in customers:
-#                 if v == u:
-#                     continue  # Skip same customer
-#                 buckets_v = Du[v]
-#                 for m, (d_minus_j, d_plus_j) in enumerate(buckets_v, start=1):
-#                     # Condition 1: d_i+ - du[u] >= d_j-
-#                     if (d_plus_i - du[u]) >= d_minus_j:
-#                         # Condition 2: If k > 1, d_j- > d_{u,k-1}+ - du[u]
-#                         if k > 1:
-#                             d_u_k_minus_1_plus = buckets_u[k - 2][1]  # k-1 index
-#                             if not (d_minus_j > (d_u_k_minus_1_plus - du[u])):
-#                                 continue  # Skip if condition not met
-#                         # Add the edge
-#                         from_node = (u, k)
-#                         to_node = (v, m)
-#                         edges.append((from_node, to_node))
-
-#     return nodes, edges, node_attributes
 
 
 def construct_capacity_graph(customers, Du, du, d0, alpha, bar_alpha):
@@ -434,89 +365,6 @@ def construct_capacity_graph(customers, Du, du, d0, alpha, bar_alpha):
 
     return nodes, arc_allowed
 
-# def construct_time_graph(data, customers, Tu, t0, alpha, bar_alpha):
-#     """
-#     Builds the directed graph (GT) using time-based remaining budget logic and defines a binary parameter.
-    
-#     Parameters:
-#     - data: Data needed to calculate travel times between customers.
-#     - customers (list): A list of customer identifiers.
-#     - Tu (dict): A dictionary of time windows for each customer [(t_minus, t_plus), ...].
-#     - t0: Maximum amount of time (initial time budget).
-    
-#     Returns:
-#     - nodes (list): A list of all nodes in the graph GT.
-#     - arc_allowed (dict): A binary parameter for each arc (i, j), where 1 = allowed, 0 = disallowed.
-#     - node_attributes (dict): A dictionary containing attributes for each node.
-#     """
-#     nodes = []
-#     arc_allowed = {}  # Binary parameter for each arc (i, j)
-#     node_attributes = {}
-
-#     # Define starting and ending depot nodes
-#     alpha = (alpha, 1)
-#     bar_alpha = (bar_alpha, 1)
-    
-#     # Add starting depot
-#     nodes.append(alpha)
-#     node_attributes[alpha] = {'ui': alpha, 't_minus': t0, 't_plus': t0}
-
-#     # Add ending depot
-#     nodes.append(bar_alpha)
-#     node_attributes[bar_alpha] = {'ui': bar_alpha, 't_minus': 0, 't_plus': t0}
-
-#     # Add nodes for each customer and their time buckets
-#     for u in customers:
-#         buckets = Tu[u]
-#         for k, (t_minus, t_plus) in enumerate(buckets, start=1):
-#             node = (u, k)
-#             nodes.append(node)
-#             node_attributes[node] = {'ui': u, 't_minus': t_minus, 't_plus': t_plus}
-
-#     # Generate all possible arcs and determine if they are allowed
-#     for i in nodes:
-#         for j in nodes:
-#             if i == j:
-#                 continue  # Skip self-loops
-            
-#             # Default to disallowed
-#             arc_allowed[(i, j)] = 0
-            
-#             # Define rules for allowed arcs
-#             if i == alpha:
-#                 # Rule 1: From alpha to the last bucket of a customer
-#                 if j[0] in customers and j[1] == len(Tu[j[0]]):
-#                     arc_allowed[(i, j)] = 1
-#             elif j == bar_alpha:
-#                 # Rule 2: From the first bucket of a customer to bar_alpha
-#                 if i[0] in customers and i[1] == 1:
-#                     arc_allowed[(i, j)] = 1
-#             elif i[0] in customers and j[0] in customers:
-#                 # Rule 3: Between buckets of different customers
-#                 u, v = i[0], j[0]
-#                 if u != v:  # Skip same customer
-#                     k = i[1]  # Bucket index for u
-#                     m = j[1]  # Bucket index for v
-
-#                     t_plus_u = node_attributes[i]['t_plus']
-#                     t_minus_v = node_attributes[j]['t_minus']
-#                     travel_time = travel_time_computer(data, u, v)
-
-#                     # Condition 1: t^+_u - travel_time >= t^-_v
-#                     if t_plus_u - travel_time >= t_minus_v:
-#                         if k > 1:
-#                             # Condition 2: t^-_v > t^+_{u, k-1} - travel_time
-#                             t_plus_u_prev = node_attributes[(u, k - 1)]['t_plus']
-#                             if not (t_minus_v > t_plus_u_prev - travel_time):
-#                                 continue  # Skip if condition not met
-#                         # Arc is allowed
-#                         arc_allowed[(i, j)] = 1
-#             elif i[0] in customers and i[1] > 1 and i[0] == j[0]:
-#                 # Rule 4: From higher bucket k -> lower bucket (k-1) for the same customer
-#                 if i[1] == j[1] + 1:
-#                     arc_allowed[(i, j)] = 1
-
-#     return nodes, arc_allowed
 
 
 
@@ -592,11 +440,7 @@ def construct_time_graph(data, customers, Tu, t0, alpha, bar_alpha):
 
                     # Condition 1: t^+_u - travel_time >= t^-_v
                     if t_plus_i - travel_time >= t_minus_j:
-                        # if k > 1:
-                        #     # Condition 2: t^-_v > t^+_{u, k-1} - travel_time
-                        #     t_plus_u_prev = Tu[u][k - 2][1]
-                        #     if not (t_minus_j > t_plus_u_prev - travel_time):
-                        #         continue  # Skip if condition not met
+                        
                         # # Arc is allowed
                         arc_allowed[(i, j)] = 1
             elif i[0] in customers and i[1] > 1 and i[0] == j[0]:
@@ -607,93 +451,6 @@ def construct_time_graph(data, customers, Tu, t0, alpha, bar_alpha):
     return nodes, arc_allowed
 
 
-
-# def construct_time_graph(data, customers, Tu, t0):
-#     """
-#     Builds the directed graph (GT) using time-based remaining budget logic.
-    
-#     Parameters:
-#     - data for nodes which will be required in the function for calculating travel times
-#     - customers (list): A list of customer identifiers.
-#     - Tu (dict): A dictionary of time windows for each customer (t_minus, t_plus).
-#     - t0: Maximumn amount of time 
-    
-#     Returns:
-#     - nodes (list): A list of all nodes in the graph GT.
-#     - edges (list): A list of all directed edges in the graph GT.
-#     - node_attributes (dict): A dictionary containing attributes for each node.
-#     """
-
-#     nodes = []
-#     edges = []
-#     node_attributes = {}
-
-#     # Define starting and ending depot nodes
-#     alpha = ('alpha', 1)
-#     bar_alpha = ('bar_alpha', 1)
-    
-#     # Appending starting depot to node list. Based on the paper, t_minus = t_plus = t0
-#     nodes.append(alpha)
-#     node_attributes[alpha] = {'ui': 'alpha', 't_minus': t0, 't_plus': t0}  # Start depot
-
-#     # Appending ending depot to node list. Based on the paper, t_minus = 0 and t_plus = t0
-#     nodes.append(bar_alpha)
-#     node_attributes[bar_alpha] = {'ui': 'bar_alpha', 't_minus': 0, 't_plus': t0}  # End depot
-
-#     # Add nodes for each customer and their time buckets
-#     for u in customers:
-#         buckets = Tu[u]
-#         for k, (t_minus, t_plus) in enumerate(buckets, start=1):
-#             node = (u, k) 
-#             nodes.append(node)
-#             node_attributes[node] = {'ui': u, 't_minus': t_minus, 't_plus': t_plus}
-    
-
-#     # Add edges from the starting depot to the last bucket of each customer
-#     for u in customers:
-#         num_buckets = len([node for node in nodes if node[0] == u])
-#         from_node = alpha
-#         to_node = (u, num_buckets)
-#         edges.append((from_node, to_node))
-#     # breakpoint()
-#     # Add edges from the first bucket of each customer to the ending depot
-#     for u in customers:
-#         from_node = (u, 1)
-#         to_node = bar_alpha
-#         edges.append((from_node, to_node))
-#     # breakpoint()
-#     # Add edges between consecutive buckets of the same customer
-#     for u in customers:
-#         customer_nodes = [node for node in nodes if node[0] == u]
-#         for k in range(2, len(customer_nodes) + 1):
-#             from_node = (u, k)
-#             to_node = (u, k - 1)
-#             edges.append((from_node, to_node))
-#     # breakpoint()
-#     # Add edges between buckets of different customers
-
-#     for u in customers:
-#         for v in customers:
-#             if u == v:
-#                 continue  # Skip same customer
-#             for node_u in [node for node in nodes if node[0] == u]:
-#                 for node_v in [node for node in nodes if node[0] == v]:
-#                     t_plus_u = node_attributes[node_u]['t_plus']
-#                     t_minus_v = node_attributes[node_v]['t_minus']
-#                     travel_time = travel_time_computer(data, u, v) 
-
-#                     # Condition 1: t^+_u - travel_time >= t^-_v
-#                     if t_plus_u - travel_time >= t_minus_v:
-#                         # Condition 2: If k > 1, t^-_v > t^+_{u, k-1} - travel_time
-#                         k = node_u[1]  # Bucket index for u
-                        
-#                         if k > 1:
-#                             t_plus_u_prev = node_attributes[(u, k - 1)]['t_plus']
-#                             if not (t_minus_v > t_plus_u_prev - travel_time):
-#                                 continue  # Skip if condition not met
-#                         # Add the edge
-#                         edges.append((node_u, node_v))
-#     return nodes, edges, node_attributes
 
 def calculate_distance(item1, item2):
     """
@@ -807,42 +564,6 @@ def base_case_feasilibtiy(data, u, v, vehicle_capacity):
         return False
     
 
-
-    # time_now = 0.0
-
-    # # checking time window feasiblity at starting depot
-    # if time_now < data[1]["early"]:
-    #     time_now = data[1]["early"]
-    # if time_now > data[1]["late"]:
-    #     return False  # can't depart depot if we're already too late
-
-    # # checking time window feasiblity at u
-    # time_now += euclidean_dist(data[1]["x"], data[1]["y"], data[u]["x"], data[u]["y"])
-    # # Wait if we arrive before u's window_start
-    # if time_now < data[u]["early"]:
-    #     time_now = data[u]["early"]
-
-    # if time_now > data[u]["late"]:
-    #     return False
- 
-    # time_now += data[u]["service"]
-
-    # # checking time window feasiblity at v
-    # time_now += euclidean_dist(data[u]["x"], data[u]["y"], data[v]["x"], data[v]["y"])
-    # # Wait if we arrive before v's window_start
-    # if time_now < data[v]["early"]:
-    #     time_now = data[v]["early"]
-
-    # if time_now > data[v]["late"]:
-    #     return False
-
-    # time_now += data[v]["service"]
-
-    # # checking time window feasiblity at the ending depot
-    # time_now += euclidean_dist(data[u]["x"], data[u]["y"], data[len(data)]["x"], data[len(data)]["y"])
-    # if time_now > data[len(data)]["late"]:
-    #     return False
-
     return True
 
 
@@ -881,63 +602,6 @@ def compute_c_and_phis(data, route):
     c     = c_minus + travel_time_computer(data, u,w)
     return c, phi, phi_hat
 
-# def compute_c_and_phis(data, route, memo=None):
-#     """
-#     Calculates c_r, phi_r, and phihat_r for a given route recursively.
-
-#     Inputs:
-#     - data: Dictionary containing node data (e.g., time windows, travel times).
-#     - route: List of nodes representing the route [u1, u2, ..., v].
-#     - memo: Dictionary for memoization to store intermediate results.
-
-#     Returns:
-#     - c: Total travel distance for the route.
-#     - phi: Earliest possible departure time from u1.
-#     - phi_hat: Latest possible departure time from u1.
-#     """
-#     if memo is None:
-#         memo = {}  # Initialize memoization dictionary
-
-#     route_key = tuple(route)
-#     if route_key in memo:
-#         return memo[route_key]  # Return cached result if available
-
-#     # Base case: route with two customers => [u, v]
-#     if len(route) == 2:
-#         u, v = route
-#         t_plus_u, t_minus_u = time_windows(data, u)
-#         t_plus_v, t_minus_v = time_windows(data, v)
-
-#         # Compute base-case cost and phis
-#         travel_time_uv = travel_time_computer(data, u, v)
-#         c = travel_time_uv
-#         phi = min(t_plus_u, t_plus_v + travel_time_uv)  # Equation 13a
-#         phi_hat = max(t_minus_u, t_minus_v + travel_time_uv)  # Equation 13b
-
-#         # Cache and return result
-#         memo[route_key] = (c, phi, phi_hat)
-#         return c, phi, phi_hat
-
-#     # Recursive case: route with more than two customers
-#     u = route[0]
-#     w = route[1]
-#     r_minus = route[1:]
-
-#     # Recursively calculate c_(r_minus), phi_(r_minus), phiHat_(r_minus)
-#     c_minus, phi_minus, phi_hat_minus = compute_c_and_phis(data, r_minus, memo)
-
-#     # Compute travel time between u and w
-#     travel_time_uw = travel_time_computer(data, u, w)
-
-#     # Compute phi, phi_hat, and c for the current route
-#     t_plus_u, t_minus_u = time_windows(data, u)
-#     phi = min(t_plus_u, phi_minus + travel_time_uw)  # Equation 13c
-#     phi_hat = max(t_minus_u, phi_hat_minus + travel_time_uw)  # Equation 13d
-#     c = c_minus + travel_time_uw
-
-#     # Cache and return result
-#     memo[route_key] = (c, phi, phi_hat)
-#     return c, phi, phi_hat
 
 R_dict = defaultdict(list)  # maps p -> list of feasible routes (R_p)
 
@@ -1792,30 +1456,7 @@ def lp_relaxation_solver(all_nodes, customers, customer_demands, node_data, E_st
     #solving the model
     
     model.optimize()
-    # used_arcs = [(u,w) for (u,w) in E_star.keys() if x[(u,w)].X > 0.01]
-    # print("Used arcs:")
-    # for (u,w) in used_arcs:
-    #     print(f"  {u} -> {w}")
 
-    # Check if the model is infeasible
-    # if model.status == GRB.INFEASIBLE:
-    #     print("Model is infeasible. Computing IIS...")
-        
-    #     # Compute IIS
-    #     model.computeIIS()
-
-    #     # Write IIS to a file for review
-    #     model.write("model.ilp")
-        
-    #     # Print IIS details
-    #     for c in model.getConstrs():
-    #         if c.IISConstr:  # Check if the constraint is part of IIS
-    #             print(f"Infeasible Constraint: {c.ConstrName}")
-    #     for v in model.getVars():
-    #         if v.IISLB:  # Check if the variable's lower bound is part of IIS
-    #             print(f"Infeasible Lower Bound: {v.VarName}")
-    #         if v.IISUB:  # Check if the variable's upper bound is part of IIS
-    #             print(f"Infeasible Upper Bound: {v.VarName}")
     if model.status == GRB.OPTIMAL:
         objective_value = model.objVal
         capacity_flow_balance_duals = {}
